@@ -1,0 +1,49 @@
+buildscript {
+    ext {
+        kotlinVersion = '1.1.2-2'
+        hsqlVersion = '2.4.0'
+    }
+    repositories {
+        maven {
+            url "http://dl.bintray.com/kotlin/kotlin-eap-1.1"
+        }
+        jcenter()
+    }
+    dependencies {
+        classpath(
+                "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion",
+        )
+    }
+}
+
+repositories {
+    maven {
+        url "http://dl.bintray.com/kotlin/kotlin-eap-1.1"
+    }
+    jcenter()
+}
+
+apply plugin: "kotlin"
+
+
+kotlin {
+    experimental {
+        coroutines 'enable'
+    }
+}
+
+dependencies {
+    compile "org.jetbrains.kotlin:kotlin-stdlib:$kotlinVersion"
+    compile 'org.jetbrains.kotlinx:kotlinx-coroutines-core:0.15'
+    compile 'com.github.andrewoma.kwery:core:0.16'
+
+    testCompile "org.jetbrains.kotlin:kotlin-test-junit:$kotlinVersion"
+    testCompile 'junit:junit:4.12'
+    testCompile 'org.assertj:assertj-core:3.7.0'
+    testCompile 'com.zaxxer:HikariCP:2.6.1'
+    testCompile "org.hsqldb:hsqldb:$hsqlVersion"
+}
+
+task wrapper(type: Wrapper) {
+    gradleVersion = "3.5"
+}

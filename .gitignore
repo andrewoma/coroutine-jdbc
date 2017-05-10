@@ -1,0 +1,16 @@
+*~
+.gradle
+*.iml
+*.ipr
+*.iws
+*.classpath
+*.project
+*.settings
+.DS_Store
+.textmate
+.idea
+*.sublime-*
+.nb-gradle
+build
+target
+classes
