@@ -10,9 +10,73 @@ import java.sql.Connection
 import javax.sql.DataSource
 import kotlin.coroutines.experimental.AbstractCoroutineContextElement
 import kotlin.coroutines.experimental.CoroutineContext
+import kotlin.coroutines.experimental.intrinsics.suspendCoroutineOrReturn
 
+class Database(val name: String, val dataSource: DataSource, val poolSize: Int) {
 
-private class TransactionContext(val connection: Connection, var rollbackOnly: Boolean = false) : AbstractCoroutineContextElement(TransactionContext) {
+    val context = newFixedThreadPoolContext(nThreads = poolSize, name = name) + DataSourceContext(dataSource)
+
+    suspend fun <T> transaction(block: suspend (Transaction) -> T) {
+        val transaction = currentTransaction()
+        if (transaction == null) {
+            newTransaction(block)
+        } else {
+            block(transaction)
+        }
+    }
+
+    suspend fun currentTransaction(): Transaction? = coroutineContext()[TransactionContext]
+
+    private suspend fun <T> newTransaction(block: suspend (Transaction) -> T) = run(context) {
+        val connection = context.dataSource.connection
+        try {
+            connection.autoCommit = false
+            val transactionContext = TransactionContext(connection)
+            val newContext = context + transactionContext
+            run(newContext) {
+                block(transactionContext)
+                if (transactionContext.rollbackOnly) {
+                    connection.rollback()
+                } else {
+                    connection.commit()
+                }
+            }
+        } catch (throwable: Throwable) {
+            connection.rollback()
+        } finally {
+            connection.close()
+        }
+    }
+
+    suspend fun <T> withConnection(block: suspend (Connection) -> T): T {
+        val connection = coroutineContext().connection
+        return if (connection == null) {
+            run(context) {
+                val newConnection = context.dataSource.connection
+                try {
+                    block(newConnection)
+                } finally {
+                    newConnection.close()
+                }
+            }
+        } else {
+            block(connection)
+        }
+    }
+
+    suspend fun <T> withSession(block: suspend (Session) -> T): T = withConnection { connection ->
+        block(DefaultSession(connection, HsqlDialect(), interceptor = LoggingInterceptor()))
+    }
+}
+
+interface Transaction {
+    var rollbackOnly: Boolean
+}
+
+private suspend fun coroutineContext(): CoroutineContext = suspendCoroutineOrReturn { it.context }
+
+private class TransactionContext(val connection: Connection, override var rollbackOnly: Boolean = false) :
+        AbstractCoroutineContextElement(TransactionContext), Transaction {
     companion object Key : CoroutineContext.Key<TransactionContext>
 }
 
@@ -20,67 +84,10 @@ private class DataSourceContext(val dataSource: DataSource) : AbstractCoroutineC
     companion object Key : CoroutineContext.Key<DataSourceContext>
 }
 
-fun createDatabaseContext(name: String, poolSize: Int, dataSource: DataSource): CoroutineContext {
-    return newFixedThreadPoolContext(nThreads = poolSize, name = name) + DataSourceContext(dataSource)
-}
-
-suspend fun <T> transaction(context: CoroutineContext, block: suspend (CoroutineContext) -> T) = run(context) {
-    if (context[TransactionContext] == null) {
-        newTransaction(context, block)
-    } else {
-        block(context)
-    }
-}
-
-var CoroutineContext.rollbackOnly: Boolean
-    get() = this[TransactionContext]?.rollbackOnly ?: false
-    set(value) {
-        val transactionContext = this[TransactionContext]
-        if (transactionContext != null) transactionContext.rollbackOnly = value
-    }
-
 private val CoroutineContext.dataSource
     get() = this[DataSourceContext]?.dataSource ?: throw IllegalStateException("DataSourceContext not in coroutine scope")
 
 private val CoroutineContext.connection
     get() = this[TransactionContext]?.connection
 
-
-private suspend fun <T> newTransaction(context: CoroutineContext, block: suspend (CoroutineContext) -> T) {
-    val connection = context.dataSource.connection
-    try {
-        connection.autoCommit = false
-        val transactionContext = context + TransactionContext(connection)
-        run(transactionContext) {
-            block(transactionContext)
-        }
-        if (transactionContext.rollbackOnly) {
-            connection.rollback()
-        } else {
-            connection.commit()
-        }
-    } catch (throwable: Throwable) {
-        connection.rollback()
-    } finally {
-        connection.close()
-    }
-}
-
-suspend fun <T> withConnection(context: CoroutineContext, block: suspend (Connection) -> T) = run(context) {
-    val connection = context.connection
-    if (connection == null) {
-        val newConnection = context.dataSource.connection
-        try {
-            block(newConnection)
-        } finally {
-            newConnection.close()
-        }
-    } else {
-        block(connection)
-    }
-}
-
-suspend fun <T> withSession(context: CoroutineContext, block: suspend (Session) -> T) = withConnection(context) {
-    block(DefaultSession(it, HsqlDialect(), interceptor = LoggingInterceptor()))
-}
 
